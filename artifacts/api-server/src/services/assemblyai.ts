@@ -100,8 +100,8 @@ export async function transcribeAudio(
     },
     body: JSON.stringify({
       audio_url: uploadPayload.upload_url,
-      speech_models: ["universal-3-5-pro"],
-      language_code: "en_us",
+      speech_model: "nano",
+      language_detection: true,
     }),
     signal,
   });
