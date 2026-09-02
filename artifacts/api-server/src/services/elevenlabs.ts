@@ -3,7 +3,7 @@ import { ProviderError } from "./assemblyai";
 const ELEVENLABS_BASE_URL = "https://api.elevenlabs.io/v1/text-to-speech";
 
 function getElevenLabsConfig(): { apiKey: string; voiceId: string } {
-  const apiKey = process.env.Eleven_ai_key;
+  const apiKey = process.env.ELEVENLABS_API_KEY || process.env.Eleven_ai_key;
   const voiceId = process.env.ELEVENLABS_VOICE_ID;
 
   if (!apiKey || !voiceId) {

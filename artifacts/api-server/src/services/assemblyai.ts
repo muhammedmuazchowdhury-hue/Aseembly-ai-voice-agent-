@@ -14,7 +14,7 @@ export class ProviderError extends Error {
 }
 
 function getAssemblyKey(): string {
-  const key = process.env.assembly_api_key;
+  const key = process.env.ASSEMBLYAI_API_KEY || process.env.assembly_api_key;
   if (!key) {
     throw new ProviderError(
       "CONFIGURATION_ERROR",
