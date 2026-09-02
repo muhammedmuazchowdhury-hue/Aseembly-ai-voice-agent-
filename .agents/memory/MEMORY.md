@@ -1,0 +1,1 @@
+- [OpenAPI codegen compatibility](openapi-codegen-compatibility.md) — use portable JSON primitives unless generated server schemas support DOM and OpenAPI integer output.

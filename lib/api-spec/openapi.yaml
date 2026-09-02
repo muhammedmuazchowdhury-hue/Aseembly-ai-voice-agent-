@@ -10,6 +10,8 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: voice-agent
+    description: Voice assistant operations
 paths:
   /healthz:
     get:
@@ -24,6 +26,43 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /voice-agent/turn:
+    post:
+      operationId: processVoiceTurn
+      tags: [voice-agent]
+      summary: Process one recorded voice turn
+      description: Transcribes an uploaded recording, generates a concise assistant response, and returns synthesized speech.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VoiceTurnInput"
+      responses:
+        "200":
+          description: Voice turn completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VoiceTurnResult"
+        "400":
+          description: Invalid or missing audio
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "413":
+          description: Audio file is too large
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "502":
+          description: Upstream voice provider failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
 components:
   schemas:
     HealthStatus:
@@ -33,4 +72,69 @@ components:
           type: string
       required:
         - status
+    VoiceTurnInput:
+      type: object
+      properties:
+        audioBase64:
+          type: string
+          minLength: 1
+          description: Base64-encoded short browser recording.
+        audioMimeType:
+          type: string
+          enum: [audio/webm, audio/wav, audio/ogg, audio/mpeg]
+      required:
+        - audioBase64
+        - audioMimeType
+    VoiceTurnResult:
+      type: object
+      properties:
+        requestId:
+          type: string
+        transcript:
+          type: string
+        responseText:
+          type: string
+        audioBase64:
+          type: string
+          description: Base64-encoded MPEG audio for immediate browser playback.
+        audioMimeType:
+          type: string
+        timings:
+          $ref: "#/components/schemas/VoiceTurnTimings"
+      required:
+        - requestId
+        - transcript
+        - responseText
+        - audioBase64
+        - audioMimeType
+        - timings
+    VoiceTurnTimings:
+      type: object
+      properties:
+        totalMs:
+          type: number
+        transcriptionMs:
+          type: number
+        responseMs:
+          type: number
+        speechMs:
+          type: number
+      required:
+        - totalMs
+        - transcriptionMs
+        - responseMs
+        - speechMs
+    ApiError:
+      type: object
+      properties:
+        error:
+          type: string
+        code:
+          type: string
+        requestId:
+          type: string
+      required:
+        - error
+        - code
+        - requestId
 

@@ -6,6 +6,9 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface HealthStatus {
-  status: string;
+export interface VoiceTurnTimings {
+  totalMs: number;
+  transcriptionMs: number;
+  responseMs: number;
+  speechMs: number;
 }
