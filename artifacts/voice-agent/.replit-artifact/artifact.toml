@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "Voice Agent"
+description = "A mobile-friendly English voice assistant that turns recorded speech into concise answers and spoken audio using AssemblyAI, Gemini, and ElevenLabs."
+version = "1.0.0"
+id = "artifacts/voice-agent"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 20599
+
+[services.development]
+run = "pnpm --filter @workspace/voice-agent run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/voice-agent", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/voice-agent/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "20599"
+BASE_PATH = "/"
