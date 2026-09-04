@@ -1,72 +1,90 @@
-import { ProviderError } from "./assemblyai";
+import { config } from '../lib/config';
 
-const ELEVENLABS_BASE_URL = "https://api.elevenlabs.io/v1/text-to-speech";
-
-function getElevenLabsConfig(): { apiKey: string; voiceId: string } {
-  const apiKey = process.env.ELEVENLABS_API_KEY || process.env.Eleven_ai_key;
-  const voiceId = process.env.ELEVENLABS_VOICE_ID;
-
-  if (!apiKey || !voiceId) {
-    throw new ProviderError(
-      "CONFIGURATION_ERROR",
-      "ElevenLabs is not configured.",
-      503,
-    );
-  }
-
-  return { apiKey, voiceId };
-}
-
-async function readElevenLabsError(response: Response): Promise<string> {
-  try {
-    const payload = (await response.json()) as {
-      detail?: { message?: string } | string;
-    };
-    const detail =
-      typeof payload.detail === "string"
-        ? payload.detail
-        : payload.detail?.message;
-    return (
-      detail ??
-      `ElevenLabs request failed with ${response.status}.`
-    );
-  } catch {
-    return `ElevenLabs request failed with ${response.status}.`;
+export class ElevenLabsError extends Error {
+  constructor(
+    public readonly code: string,
+    message: string,
+    public readonly status = 502
+  ) {
+    super(message);
+    this.name = 'ElevenLabsError';
   }
 }
 
-export async function synthesizeSpeech(
+function getApiKey(): string {
+  const key = config.elevenLabsApiKey || process.env.ELEVENLABS_API_KEY;
+  if (!key) {
+    throw new ElevenLabsError(
+      'CONFIGURATION_ERROR',
+      'ElevenLabs API key is not configured.',
+      503
+    );
+  }
+  return key;
+}
+
+// Stream audio response for real-time streaming mode
+export async function* streamTextToSpeech(
   text: string,
   signal: AbortSignal,
-): Promise<Buffer> {
-  const { apiKey, voiceId } = getElevenLabsConfig();
+  voiceId = config.elevenLabsVoiceId
+): AsyncIterable<Buffer> {
+  const apiKey = getApiKey();
 
   const response = await fetch(
-    `${ELEVENLABS_BASE_URL}/${encodeURIComponent(voiceId)}`,
+    `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream`,
     {
-      method: "POST",
+      method: 'POST',
       headers: {
-        "xi-api-key": apiKey,
-        "content-type": "application/json",
-        accept: "audio/mpeg",
+        'Accept': 'audio/mpeg',
+        'Content-Type': 'application/json',
+        'xi-api-key': apiKey,
       },
       body: JSON.stringify({
         text,
-        model_id: "eleven_multilingual_v2",
+        model_id: 'eleven_turbo_v2_5',
         voice_settings: {
           stability: 0.5,
           similarity_boost: 0.75,
-          style: 0.15,
-          use_speaker_boost: true,
         },
       }),
       signal,
-    },
+    }
   );
 
-  if (!response.ok) {
-    throw new ProviderError("TTS_FAILED", await readElevenLabsError(response));
+  if (!response.ok || !response.body) {
+    throw new ElevenLabsError(
+      'TTS_GENERATION_FAILED',
+      `ElevenLabs request failed with status ${response.status}`
+    );
   }
 
-  return Buffer.from(await response.arrayBuffer());
+  const reader = response.body.getReader();
+
+  while (true) {
+    if (signal.aborted) {
+      reader.cancel();
+      break;
+    }
+
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    if (value) {
+      yield Buffer.from(value);
+    }
+  }
+}
+
+// Fallback method for batch synthesis
+export async function generateSpeech(
+  text: string,
+  signal: AbortSignal,
+  voiceId = config.elevenLabsVoiceId
+): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of streamTextToSpeech(text, signal, voiceId)) {
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks);
 }
