@@ -4,7 +4,7 @@ import { ConversationMessage, VoiceSession } from './llm/types';
 export class SessionManager {
   private sessions: Map<string, VoiceSession> = new Map();
 
-  // নতুন সেশন তৈরি
+  // Create a new session
   createSession(): VoiceSession {
     const id = randomUUID();
     const session: VoiceSession = {
@@ -17,12 +17,12 @@ export class SessionManager {
     return session;
   }
 
-  // সেশন খুঁজে বের করা
+  // Retrieve an existing session
   getSession(id: string): VoiceSession | undefined {
     return this.sessions.get(id);
   }
 
-  // সেশনে নতুন মেসেজ অ্যাড করা
+  // Add a new message to a session's history
   addMessage(id: string, message: ConversationMessage) {
     const session = this.sessions.get(id);
     if (session) {
@@ -31,16 +31,16 @@ export class SessionManager {
     }
   }
 
-  // ইউজার কথা বলে উঠলে AI-কে থামিয়ে দেওয়া (Barge-in/Interruption)
+  // Handle barge-in: Abort current AI response if user interrupts
   interruptSession(id: string) {
     const session = this.sessions.get(id);
     if (session && session.activeAbortController) {
       session.activeAbortController.abort();
-      session.activeAbortController = undefined; // Abort করার পর রিসেট
+      session.activeAbortController = undefined; // Reset after aborting
     }
   }
 
-  // মেমোরি লিক ঠেকাতে পুরনো সেশন মুছে ফেলা
+  // Prevent memory leaks by removing inactive sessions
   cleanupOldSessions(maxIdleMs: number) {
     const now = Date.now();
     for (const [id, session] of this.sessions.entries()) {
