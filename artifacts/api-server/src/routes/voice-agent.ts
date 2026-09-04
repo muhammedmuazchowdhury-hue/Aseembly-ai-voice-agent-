@@ -1,146 +1,158 @@
-import { randomUUID } from "node:crypto";
-import { Router, type IRouter } from "express";
-import { ProcessVoiceTurnBody } from "@workspace/api-zod";
-import { generateResponse } from "../services/gemini";
-import {
-  ProviderError,
-  transcribeAudio,
-} from "../services/assemblyai";
-import { synthesizeSpeech } from "../services/elevenlabs";
+import { FastifyInstance, FastifyRequest } from 'fastify';
+import { WebSocket } from 'ws';
+import { createRealtimeTranscriber } from '../services/assemblyai';
+import { generateChatResponseStream } from '../services/gemini';
+import { streamTextToSpeech } from '../services/elevenlabs';
+import { sessionManager } from '../services/voice-session';
 
-const MAX_AUDIO_BYTES = 8 * 1024 * 1024;
-const MAX_BASE64_LENGTH = Math.ceil(MAX_AUDIO_BYTES / 3) * 4 + 4;
-const REQUEST_TIMEOUT_MS = 90_000;
+export async function voiceAgentRoute(fastify: FastifyInstance) {
+  fastify.get('/api/voice-agent/stream', { websocket: true }, (connection: { socket: WebSocket }, req: FastifyRequest) => {
+    const socket = connection.socket;
+    const urlParams = new URL(req.url, `http://${req.headers.host}`);
+    const sessionIdParam = urlParams.searchParams.get('sessionId');
+    
+    // Session initialization
+    const session = sessionIdParam ? sessionManager.getSession(sessionIdParam) || sessionManager.createSession() : sessionManager.createSession();
 
-const router: IRouter = Router();
+    // Send session started event
+    socket.send(JSON.stringify({ type: 'session.started', sessionId: session.id }));
+    console.log(`Voice session connected: ${session.id}`);
 
-function getRequestId(req: { id?: unknown }): string {
-  return typeof req.id === "string" || typeof req.id === "number"
-    ? String(req.id)
-    : randomUUID();
-}
+    let activeController: AbortController | null = null;
 
-function decodeAudio(audioBase64: string): Buffer {
-  if (audioBase64.length > MAX_BASE64_LENGTH) {
-    throw new ProviderError(
-      "AUDIO_TOO_LARGE",
-      "The recording is too large. Please keep it under 8 MB.",
-      413,
-    );
-  }
-
-  const audio = Buffer.from(audioBase64, "base64");
-  if (audio.length === 0 || audio.length > MAX_AUDIO_BYTES) {
-    throw new ProviderError(
-      "INVALID_AUDIO",
-      "Please provide a valid audio recording under 8 MB.",
-      400,
-    );
-  }
-
-  return audio;
-}
-
-function sendError(
-  res: Parameters<Parameters<IRouter["post"]>[1]>[1],
-  requestId: string,
-  error: unknown,
-): void {
-  if (error instanceof ProviderError) {
-    res.status(error.status).json({
-      error: error.message,
-      code: error.code,
-      requestId,
-    });
-    return;
-  }
-
-  if (error instanceof DOMException && error.name === "AbortError") {
-    res.status(504).json({
-      error: "The voice request timed out.",
-      code: "REQUEST_TIMEOUT",
-      requestId,
-    });
-    return;
-  }
-
-  res.status(502).json({
-    error: "The voice assistant could not complete the request.",
-    code: "PIPELINE_FAILED",
-    requestId,
-  });
-}
-
-router.post("/voice-agent/turn", async (req, res) => {
-  const requestId = getRequestId(req);
-  const startedAt = Date.now();
-  const controller = new AbortController();
-  const timeout = setTimeout(
-    () => controller.abort("request-timeout"),
-    REQUEST_TIMEOUT_MS,
-  );
-
-  req.on("aborted", () => {
-    controller.abort("client-aborted");
-  });
-
-  res.on("close", () => {
-    if (!res.writableEnded) {
-      controller.abort("client-disconnected");
-    }
-  });
-
-  try {
-    const parsed = ProcessVoiceTurnBody.safeParse(req.body);
-    if (!parsed.success) {
-      res.status(400).json({
-        error: "The audio request is invalid.",
-        code: "INVALID_REQUEST",
-        requestId,
-      });
-      return;
-    }
-
-    const audio = decodeAudio(parsed.data.audioBase64);
-
-    const transcriptionStartedAt = Date.now();
-    const transcript = await transcribeAudio(audio, controller.signal);
-    const transcriptionMs = Date.now() - transcriptionStartedAt;
-
-    const responseStartedAt = Date.now();
-    const responseText = await generateResponse(
-      transcript,
-      controller.signal,
-    );
-    const responseMs = Date.now() - responseStartedAt;
-
-    const speechStartedAt = Date.now();
-    const audioBuffer = await synthesizeSpeech(
-      responseText,
-      controller.signal,
-    );
-    const speechMs = Date.now() - speechStartedAt;
-
-    res.json({
-      requestId,
-      transcript,
-      responseText,
-      audioBase64: audioBuffer.toString("base64"),
-      audioMimeType: "audio/mpeg",
-      timings: {
-        totalMs: Date.now() - startedAt,
-        transcriptionMs,
-        responseMs,
-        speechMs,
+    // Initialize AssemblyAI Realtime Transcriber
+    createRealtimeTranscriber(
+      (partialText) => {
+        // Send partial transcript
+        socket.send(JSON.stringify({ type: 'transcript.partial', text: partialText }));
       },
-    });
-  } catch (error) {
-    if (!res.headersSent) {
-      sendError(res, requestId, error);
-    }
-  } finally {
-    clearTimeout(timeout);
-  }
-});
+      async (finalText) => {
+        const transcriptionStartedAt = Date.now();
+        console.log(`User (Final): ${finalText}`);
+        socket.send(JSON.stringify({ type: 'transcript.final', text: finalText }));
+        const transcriptionMs = Date.now() - transcriptionStartedAt;
 
-export default router;
+        // Handle barge-in: abort ongoing LLM/TTS generation
+        if (activeController) {
+          activeController.abort();
+        }
+        activeController = new AbortController();
+        const signal = activeController.signal;
+
+        try {
+          let fullAIResponse = '';
+          let llmFirstTokenMs = 0;
+          let ttsFirstAudioMs = 0;
+          const llmStartedAt = Date.now();
+          let isFirstToken = true;
+
+          const textStream = generateChatResponseStream(finalText, session, signal);
+
+          for await (const chunk of textStream) {
+            if (signal.aborted) break;
+            if (isFirstToken) {
+              llmFirstTokenMs = Date.now() - llmStartedAt;
+              isFirstToken = false;
+            }
+            fullAIResponse += chunk;
+            
+            // Send assistant text delta
+            socket.send(JSON.stringify({ type: 'assistant.text.delta', text: chunk }));
+          }
+
+          if (signal.aborted) return;
+
+          // Stream audio using ElevenLabs TTS
+          const ttsStartedAt = Date.now();
+          let isFirstAudio = true;
+          const audioStream = streamTextToSpeech(fullAIResponse, signal);
+
+          for await (const audioChunk of audioStream) {
+            if (signal.aborted) break;
+            if (isFirstAudio) {
+              ttsFirstAudioMs = Date.now() - ttsStartedAt;
+              isFirstAudio = false;
+            }
+            
+            // Send binary or base64 audio chunk via JSON contract
+            socket.send(
+              JSON.stringify({
+                type: 'assistant.audio.chunk',
+                audio: audioChunk.toString('base64'),
+                mimeType: 'audio/mpeg',
+              })
+            );
+          }
+
+          if (signal.aborted) return;
+
+          // Turn completed with granular latency metrics
+          socket.send(
+            JSON.stringify({
+              type: 'turn.completed',
+              metrics: {
+                transcriptionMs,
+                llmFirstTokenMs,
+                ttsFirstAudioMs,
+                totalMs: Date.now() - transcriptionStartedAt,
+              },
+            })
+          );
+        } catch (error: any) {
+          if (error.name === 'AbortError' || signal.aborted) {
+            console.log('Voice turn was interrupted/cancelled by user barge-in.');
+          } else {
+            console.error('Error processing voice turn:', error);
+            socket.send(
+              JSON.stringify({
+                type: 'turn.failed',
+                stage: 'pipeline',
+                code: 'PIPELINE_ERROR',
+                message: error.message,
+              })
+            );
+          }
+        }
+      }
+    ).then((transcriber) => {
+      // Receive raw microphone audio chunks from browser client
+      socket.on('message', async (data: Buffer | string) => {
+        try {
+          if (Buffer.isBuffer(data)) {
+            transcriber.sendAudio(data);
+          } else {
+            // Handle control messages if any (e.g., explicit barge-in signal)
+            const parsed = JSON.parse(data.toString());
+            if (parsed.type === 'interrupt') {
+              if (activeController) {
+                activeController.abort();
+              }
+              sessionManager.interruptSession(session.id);
+            }
+          }
+        } catch (err) {
+          console.error('Error handling incoming socket message:', err);
+        }
+      });
+
+      socket.on('close', () => {
+        console.log(`Voice session closed: ${session.id}`);
+        transcriber.close();
+        if (activeController) {
+          activeController.abort();
+        }
+      });
+    }).catch((err) => {
+      console.error('Failed to start Realtime Transcriber:', err);
+      socket.send(
+        JSON.stringify({
+          type: 'turn.failed',
+          stage: 'transcription',
+          code: 'ASSEMBLY_CONNECTION_FAILED',
+          message: 'Transcription connection failed',
+        })
+      );
+      socket.close();
+    });
+  });
+}
