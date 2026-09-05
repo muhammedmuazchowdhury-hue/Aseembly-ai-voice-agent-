@@ -14,11 +14,8 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY artifacts/ ./artifacts/
 COPY lib/ ./lib/
 
-# --side-effects-cache=false এবং সমস্ত স্ক্রিপ্ট এলাউ করার জন্য পিপিএমের বিল্ড ফ্ল্যাগ ব্যবহার করা হলো
-RUN pnpm install --no-frozen-lockfile --unsafe-perm=true --reporter=append-only
-
-# বিকল্প হিসেবে যদি নির্দিষ্ট esbuild বা অন্যান্য স্ক্রিপ্ট এপ্রুভ করাতে চান, তবে নিচের কমান্ডটি দিয়ে বিল্ড স্ক্রিপ্ট পারমিশন এনেবল করা যায়:
-RUN pnpm approve-builds --global || true
+# --config.ignore-scripts=false দিয়ে esbuild সহ সমস্ত বিল্ড স্ক্রিপ্ট রান করার অনুমতি দেওয়া হলো
+RUN pnpm install --no-frozen-lockfile --config.ignore-scripts=false
 
 RUN pnpm --filter api-server --if-present run build
 
@@ -39,7 +36,7 @@ COPY --from=builder /app/pnpm-workspace.yaml ./
 COPY --from=builder /app/artifacts/api-server/dist ./artifacts/api-server/dist
 COPY --from=builder /app/artifacts/api-server/package.json ./artifacts/api-server/package.json
 
-RUN pnpm install --prod --no-frozen-lockfile --unsafe-perm=true
+RUN pnpm install --prod --no-frozen-lockfile --config.ignore-scripts=false
 
 EXPOSE 3000
 
