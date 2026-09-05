@@ -1,4 +1,16 @@
-import React from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import {
+  Route,
+  Switch,
+  useLocation,
+  Router as WouterRouter,
+} from 'wouter';
+import { ErrorBoundary } from '@/components/error-boundary';
+import { Toaster } from '@/components/ui/toaster';
+import { TooltipProvider } from '@/components/ui/tooltip';
+import NotFound from '@/pages/not-found';
+
 import { useVoiceSession } from './hooks/useVoiceSession';
 import { useAudioRecorder } from './hooks/useAudioRecorder';
 import { useAudioPlayback } from './hooks/useAudioPlayback';
@@ -6,7 +18,9 @@ import { VoiceOrb } from './components/VoiceOrb';
 import { TranscriptView } from './components/TranscriptView';
 import { LatencyPanel } from './components/LatencyPanel';
 
-export default function App() {
+const queryClient = new QueryClient();
+
+function Home() {
   const {
     agentState,
     sessionId,
@@ -19,7 +33,7 @@ export default function App() {
     interrupt,
   } = useVoiceSession();
 
-  const { isPlaying, enqueueAudioChunk, stopPlayback } = useAudioPlayback();
+  const { stopPlayback } = useAudioPlayback();
   const { isRecording, startRecording, stopRecording } = useAudioRecorder((chunk) => {
     sendAudioChunk(chunk);
   });
@@ -74,5 +88,34 @@ export default function App() {
         Hackathon Production-Grade Voice Pipeline (AssemblyAI + Gemini + ElevenLabs)
       </footer>
     </div>
+  );
+}
+
+function Router() {
+  return (
+    <RoutedErrorBoundary>
+      <Switch>
+        <Route path="/" component={Home} />
+        <Route component={NotFound} />
+      </Switch>
+    </RoutedErrorBoundary>
+  );
+}
+
+function RoutedErrorBoundary({ children }: { children: ReactNode }) {
+  const [location] = useLocation();
+  return <ErrorBoundary resetKey={location}>{children}</ErrorBoundary>;
+}
+
+export default function App() {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <TooltipProvider>
+        <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
+          <Router />
+        </WouterRouter>
+        <Toaster />
+      </TooltipProvider>
+    </QueryClientProvider>
   );
 }
