@@ -7,14 +7,16 @@ RUN corepack enable && corepack prepare pnpm@latest --activate
 
 WORKDIR /app
 
-# Enable build scripts automatically for native dependencies like esbuild
-RUN pnpm config set ignore-scripts false --global
+# Ensure pnpm bin path is available and bypass global config path error
+ENV PNPM_HOME="/root/.local/share/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY artifacts/ ./artifacts/
 COPY lib/ ./lib/
 
-RUN pnpm install --no-frozen-lockfile
+# Install dependencies allowing build scripts to execute
+RUN pnpm install --no-frozen-lockfile --unsafe-perm=true
 RUN pnpm --filter api-server --if-present run build
 
 # ==========================================
@@ -34,7 +36,7 @@ COPY --from=builder /app/pnpm-workspace.yaml ./
 COPY --from=builder /app/artifacts/api-server/dist ./artifacts/api-server/dist
 COPY --from=builder /app/artifacts/api-server/package.json ./artifacts/api-server/package.json
 
-RUN pnpm install --prod --no-frozen-lockfile
+RUN pnpm install --prod --no-frozen-lockfile --unsafe-perm=true
 
 EXPOSE 3000
 
