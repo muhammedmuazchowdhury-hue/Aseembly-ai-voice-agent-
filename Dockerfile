@@ -8,13 +8,12 @@ RUN corepack enable && corepack prepare pnpm@latest --activate
 
 WORKDIR /app
 
-# Copy root workspace configuration files
+# Copy root workspace configuration files (এখানে COPY কিওয়ার্ডটি যোগ করা হয়েছে)
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 
 # Copy all packages and artifacts directories so workspace links resolve properly
 COPY artifacts/ ./artifacts/
 COPY lib/ ./lib/
-
 
 # Install all dependencies (ignoring frozen lockfile to bypass minor workspace version mismatches)
 RUN pnpm install --no-frozen-lockfile
@@ -44,7 +43,7 @@ COPY --from=builder /app/artifacts/api-server/package.json ./artifacts/api-serve
 # Install only production dependencies to keep the image lightweight
 RUN pnpm install --prod --no-frozen-lockfile
 
-# Expose the port your backend runs on (adjust if your server uses a different port)
+# Expose the port your backend runs on
 EXPOSE 3000
 
 # Start the built application
