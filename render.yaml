@@ -2,6 +2,7 @@ services:
   - type: web
     name: voice-agent-backend
     env: node
+    plan: free
     buildCommand: pnpm install --no-frozen-lockfile && pnpm build
     startCommand: node artifacts/api-server/dist/index.js
     envVars:
