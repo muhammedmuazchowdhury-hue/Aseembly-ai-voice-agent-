@@ -7,6 +7,9 @@ RUN corepack enable && corepack prepare pnpm@latest --activate
 
 WORKDIR /app
 
+# Enable build scripts automatically for native dependencies like esbuild
+RUN pnpm config set ignore-scripts false --global
+
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY artifacts/ ./artifacts/
 COPY lib/ ./lib/
