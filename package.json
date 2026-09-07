@@ -9,7 +9,7 @@
     "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck",
     "start": "pnpm --filter @workspace/api-server start"
   },
-  "private": true,
+ "private": true,
   "dependencies": {
     "@replit/connectors-sdk": "^0.4.1"
   },
@@ -17,4 +17,4 @@
     "prettier": "^3.9.6",
     "typescript": "~5.9.3"
   }
-} 
+}
