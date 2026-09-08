@@ -10,7 +10,7 @@ export async function voiceAgentRoute(fastify: FastifyInstance) {
     const socket = connection.socket;
     const urlParams = new URL(req.url, `http://${req.headers.host}`);
     const sessionIdParam = urlParams.searchParams.get('sessionId');
-    
+
     // Session initialization
     const session = sessionIdParam ? sessionManager.getSession(sessionIdParam) || sessionManager.createSession() : sessionManager.createSession();
 
@@ -55,7 +55,7 @@ export async function voiceAgentRoute(fastify: FastifyInstance) {
               isFirstToken = false;
             }
             fullAIResponse += chunk;
-            
+
             // Send assistant text delta
             socket.send(JSON.stringify({ type: 'assistant.text.delta', text: chunk }));
           }
@@ -73,7 +73,7 @@ export async function voiceAgentRoute(fastify: FastifyInstance) {
               ttsFirstAudioMs = Date.now() - ttsStartedAt;
               isFirstAudio = false;
             }
-            
+
             // Send binary or base64 audio chunk via JSON contract
             socket.send(
               JSON.stringify({
@@ -157,4 +157,5 @@ export async function voiceAgentRoute(fastify: FastifyInstance) {
   });
 }
 
-export default router;
+// router এর বদলে সঠিক ফাংশনটি default export করা হলো
+export default voiceAgentRoute;
