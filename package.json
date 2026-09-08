@@ -4,7 +4,7 @@
   "license": "MIT",
   "scripts": {
     "preinstall": "sh -c 'rm -f package-lock.json yarn.lock; case \"$npm_config_user_agent\" in pnpm/*) ;; *) echo \"Use pnpm instead\" >&2; exit 1 ;; esac'",
-    "build": "pnpm install --no-frozen-lockfile --prefer-offline && node artifacts/api-server/build.mjs",
+    "build": "pnpm install --no-frozen-lockfile --prefer-offline && cd artifacts/api-server && node build.mjs",
     "start": "pnpm --filter @workspace/api-server start"
   },
   "private": true,
