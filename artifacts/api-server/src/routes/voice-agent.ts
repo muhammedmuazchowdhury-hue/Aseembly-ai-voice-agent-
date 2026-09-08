@@ -156,3 +156,5 @@ export async function voiceAgentRoute(fastify: FastifyInstance) {
     });
   });
 }
+
+export default router;
