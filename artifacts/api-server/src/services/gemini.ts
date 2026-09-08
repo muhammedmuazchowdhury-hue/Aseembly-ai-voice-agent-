@@ -39,7 +39,7 @@ async function readGeminiError(response: Response): Promise<string> {
 
 export async function generateResponse(
   promptText: string,
-  signal: AbortSignal,
+  signal?: AbortSignal,
 ): Promise<string> {
   const key = getGeminiKey();
 
@@ -90,3 +90,6 @@ export async function generateResponse(
 
   return text;
 }
+
+// voice-agent.ts-এর জন্যgenerateChatResponseStream এক্সপোর্ট যুক্ত করা হলো
+export const generateChatResponseStream = generateResponse;
