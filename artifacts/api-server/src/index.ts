@@ -4,30 +4,37 @@ import express from "express";
 import app from "./app";
 import { logger } from "./lib/logger";
 
-// Resolve frontend dist path safely
+// Comprehensive path resolution for monorepo setups on Render
 const possiblePaths = [
-  path.resolve(__dirname, "../../voice-agent/dist"),
   path.resolve(process.cwd(), "artifacts/voice-agent/dist"),
   path.resolve(process.cwd(), "../voice-agent/dist"),
+  path.resolve(__dirname, "../../voice-agent/dist"),
+  path.resolve(__dirname, "../../../artifacts/voice-agent/dist"),
+  path.resolve(__dirname, "../../../voice-agent/dist"),
+  path.resolve(__dirname, "../voice-agent/dist"),
 ];
 
-const frontendDistPath =
-  possiblePaths.find((p) => fs.existsSync(p)) || possiblePaths[0];
+const frontendDistPath = possiblePaths.find((p) => fs.existsSync(p));
 
-// Serve static frontend assets
-app.use(express.static(frontendDistPath));
+if (frontendDistPath) {
+  logger.info({ frontendDistPath }, "Found frontend build output");
+  app.use(express.static(frontendDistPath));
+} else {
+  logger.warn({ searchedPaths: possiblePaths }, "Frontend build output not found");
+}
 
-// SPA Fallback: Catch-all middleware avoiding path-to-regexp syntax issues
+// SPA Fallback: Middleware avoiding path-to-regexp parser
 app.use((req, res, next) => {
   if (req.path.startsWith("/api")) {
     return next();
   }
-  const indexPath = path.join(frontendDistPath, "index.html");
-  if (fs.existsSync(indexPath)) {
-    res.sendFile(indexPath);
-  } else {
-    res.status(404).send("Frontend build output not found.");
+  if (frontendDistPath) {
+    const indexPath = path.join(frontendDistPath, "index.html");
+    if (fs.existsSync(indexPath)) {
+      return res.sendFile(indexPath);
+    }
   }
+  res.status(404).send(`Frontend build output not found. CWD: ${process.cwd()}`);
 });
 
 // Safe port fallbacks and network binding for Render container
