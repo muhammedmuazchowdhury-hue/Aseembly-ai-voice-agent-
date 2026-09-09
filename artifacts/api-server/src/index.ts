@@ -1,41 +1,38 @@
 import path from "path";
+import fs from "fs";
 import express from "express";
 import app from "./app";
 import { logger } from "./lib/logger";
 
-// ১. Vite ফ্রন্টএন্ডের বিল্ড ফোল্ডারের (dist) পাথ তৈরি
-const frontendDistPath = path.resolve(process.cwd(), "../voice-agent/dist");
+// ১. সেফ ফ্রন্টএন্ড পাথ রেজোলিউশন (যে ডিরেক্টরি থেকেই রান হোক না কেন খুঁজে নেবে)
+const possiblePaths = [
+  path.resolve(__dirname, "../../voice-agent/dist"),
+  path.resolve(process.cwd(), "artifacts/voice-agent/dist"),
+  path.resolve(process.cwd(), "../voice-agent/dist"),
+];
 
-// ২. Static ফাইল সার্ভ করা (JS, CSS, Images ইত্যাদির জন্য)
+const frontendDistPath =
+  possiblePaths.find((p) => fs.existsSync(p)) || possiblePaths[0];
+
+// ২. Static ফাইল সার্ভ করা
 app.use(express.static(frontendDistPath));
 
-// ৩. SPA Routing: API রুট ছাড়া অন্য যেকোনো পেজ রিকোয়েস্টে index.html পাঠানো
+// ৩. SPA Routing (API রুট বাদে বাকি সব রিকোয়েস্টে index.html পাঠাবে)
 app.get("*", (req, res, next) => {
   if (req.path.startsWith("/api")) {
-    return next(); // API রিকোয়েস্ট হলে তা পরবর্তী ব্যাকএন্ড রাউটে পাঠিয়ে দেবে
+    return next();
   }
-  res.sendFile(path.join(frontendDistPath, "index.html"));
+  const indexPath = path.join(frontendDistPath, "index.html");
+  if (fs.existsSync(indexPath)) {
+    res.sendFile(indexPath);
+  } else {
+    res.status(404).send("Frontend build output not found.");
+  }
 });
 
-const rawPort = process.env["PORT"];
+// ৪. সেফ PORT হ্যান্ডলিং (PORT না থাকলে ১০০০০ বা ৩০০০ পোর্টে অটো রান হবে, ক্র্যাশ করবে না)
+const port = Number(process.env.PORT || 10000);
 
-if (!rawPort) {
-  throw new Error(
-    "PORT environment variable is required but was not provided.",
-  );
-}
-
-const port = Number(rawPort);
-
-if (Number.isNaN(port) || port <= 0) {
-  throw new Error(`Invalid PORT value: "${rawPort}"`);
-}
-
-const server = app.listen(port, (err?: Error) => {
-  if (err) {
-    logger.error({ err }, "Error listening on port");
-    process.exit(1);
-  }
-
-  logger.info({ port }, "Server listening");
+app.listen(port, "0.0.0.0", () => {
+  logger.info({ port }, "Server listening successfully");
 });
