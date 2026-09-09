@@ -4,7 +4,7 @@ import express from "express";
 import app from "./app";
 import { logger } from "./lib/logger";
 
-// ১. সেফ ফ্রন্টএন্ড পাথ রেজোলিউশন (যে ডিরেক্টরি থেকেই রান হোক না কেন খুঁজে নেবে)
+// Resolve frontend dist path safely
 const possiblePaths = [
   path.resolve(__dirname, "../../voice-agent/dist"),
   path.resolve(process.cwd(), "artifacts/voice-agent/dist"),
@@ -14,11 +14,11 @@ const possiblePaths = [
 const frontendDistPath =
   possiblePaths.find((p) => fs.existsSync(p)) || possiblePaths[0];
 
-// ২. Static ফাইল সার্ভ করা
+// Serve static frontend assets
 app.use(express.static(frontendDistPath));
 
-// ৩. SPA Routing (API রুট বাদে বাকি সব রিকোয়েস্টে index.html পাঠাবে)
-app.get("*", (req, res, next) => {
+// SPA Routing: Forward non-API requests to index.html
+app.get("(.*)", (req, res, next) => {
   if (req.path.startsWith("/api")) {
     return next();
   }
@@ -30,7 +30,7 @@ app.get("*", (req, res, next) => {
   }
 });
 
-// ৪. সেফ PORT হ্যান্ডলিং (PORT না থাকলে ১০০০০ বা ৩০০০ পোর্টে অটো রান হবে, ক্র্যাশ করবে না)
+// Safe port fallbacks and network binding for Render container
 const port = Number(process.env.PORT || 10000);
 
 app.listen(port, "0.0.0.0", () => {
