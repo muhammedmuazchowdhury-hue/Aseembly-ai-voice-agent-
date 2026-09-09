@@ -17,8 +17,8 @@ const frontendDistPath =
 // Serve static frontend assets
 app.use(express.static(frontendDistPath));
 
-// SPA Routing: Forward non-API requests to index.html
-app.get("(.*)", (req, res, next) => {
+// SPA Fallback: Catch-all middleware avoiding path-to-regexp syntax issues
+app.use((req, res, next) => {
   if (req.path.startsWith("/api")) {
     return next();
   }
