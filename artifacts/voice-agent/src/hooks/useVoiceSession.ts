@@ -9,7 +9,16 @@ export interface LatencyMetrics {
   totalMs: number;
 }
 
-export function useVoiceSession(serverUrl = 'ws://localhost:3000/api/voice-agent/stream') {
+export function useVoiceSession(customServerUrl?: string) {
+  // ডায়নামিক ওয়েবসকেট URL (Render বা Localhost স্বয়ংক্রিয়ভাবে ডিটেক্ট করবে)
+  const getWsUrl = () => {
+    if (typeof window === 'undefined') return 'ws://localhost:3000/api/voice-agent/stream';
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${protocol}//${window.location.host}/api/voice-agent/stream`;
+  };
+
+  const serverUrl = customServerUrl || getWsUrl();
+
   const [agentState, setAgentState] = useState<AgentState>('idle');
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [partialTranscript, setPartialTranscript] = useState('');
@@ -66,7 +75,8 @@ export function useVoiceSession(serverUrl = 'ws://localhost:3000/api/voice-agent
     socketRef.current = ws;
 
     ws.onopen = () => {
-      console.log('Connected to Voice Agent WebSocket');
+      console.log('Connected to Voice Agent WebSocket at:', serverUrl);
+      setError(null);
       setAgentState('listening');
     };
 
