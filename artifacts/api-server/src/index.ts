@@ -11,8 +11,10 @@ function getFrontendDistPath(): string | null {
     path.join(voiceAgentDir, "dist"),
     path.resolve(process.cwd(), "../voice-agent/dist"),
     path.resolve(__dirname, "../../voice-agent/dist"),
+    path.resolve(process.cwd(), "dist"),
   ];
-  return possiblePaths.find((p) => fs.existsSync(p)) || null;
+
+  return possiblePaths.find((p) => fs.existsSync(path.join(p, "index.html"))) || null;
 }
 
 // Serve static assets dynamically
@@ -24,7 +26,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// Dynamic SPA Fallback
+// SPA Fallback
 app.use((req, res, next) => {
   if (req.path.startsWith("/api")) {
     return next();
@@ -33,12 +35,23 @@ app.use((req, res, next) => {
   const distPath = getFrontendDistPath();
   if (distPath) {
     const indexPath = path.join(distPath, "index.html");
-    if (fs.existsSync(indexPath)) {
-      return res.sendFile(indexPath);
+    return res.sendFile(indexPath);
+  }
+
+  const rawDistPath = path.join(voiceAgentDir, "dist");
+  let distContents: string[] = [];
+  
+  if (fs.existsSync(rawDistPath)) {
+    try {
+      distContents = fs.readdirSync(rawDistPath);
+    } catch (e) {
+      distContents = [];
     }
   }
 
-  res.status(404).send("Frontend build output missing.");
+  res.status(404).send(
+    `Frontend build output missing. dist folder exists: ${fs.existsSync(rawDistPath)}, contents: ${JSON.stringify(distContents)}`
+  );
 });
 
 const port = Number(process.env.PORT || 10000);
