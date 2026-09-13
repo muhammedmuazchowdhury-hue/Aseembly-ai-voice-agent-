@@ -1,10 +1,5 @@
-import path from "path";
-import fs from "fs";
-import express from "express";
-import app from "./app";
-import { logger } from "./lib/logger";
-
-const voiceAgentDir = path.resolve(process.cwd(), "../voice-agent");
+import http from "http";
+import { WebSocketServer } from "ws";
 
 function getFrontendDistPath(): string | null {
   const possiblePaths = [
@@ -40,7 +35,7 @@ app.use((req, res, next) => {
 
   const rawDistPath = path.join(voiceAgentDir, "dist");
   let distContents: string[] = [];
-  
+
   if (fs.existsSync(rawDistPath)) {
     try {
       distContents = fs.readdirSync(rawDistPath);
@@ -56,6 +51,24 @@ app.use((req, res, next) => {
 
 const port = Number(process.env.PORT || 10000);
 
-app.listen(port, "0.0.0.0", () => {
+const server = http.createServer(app);
+const wss = new WebSocketServer({ noServer: true });
+
+server.on("upgrade", (request, socket, head) => {
+  const url = new URL(request.url || "", `http://${request.headers.host}`);
+  if (url.pathname === "/api/voice-agent/stream") {
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      wss.emit("connection", ws, request);
+    });
+  } else {
+    socket.destroy();
+  }
+});
+
+wss.on("connection", (ws, request) => {
+  logger.info("WebSocket connection established");
+});
+
+server.listen(port, "0.0.0.0", () => {
   logger.info({ port }, "Server listening successfully");
 });
