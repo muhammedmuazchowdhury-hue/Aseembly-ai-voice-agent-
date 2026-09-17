@@ -3,6 +3,7 @@ import path from "path";
 import fs from "fs";
 import express from "express";
 import { WebSocketServer, WebSocket } from "ws";
+import { GoogleGenerativeAI } from "@google/genai";
 
 const app = express();
 app.use(express.json());
@@ -20,7 +21,6 @@ function getFrontendDistPath(): string | null {
   return possiblePaths.find((p) => fs.existsSync(path.join(p, "index.html"))) || null;
 }
 
-// Serve static assets dynamically
 app.use((req, res, next) => {
   const distPath = getFrontendDistPath();
   if (distPath) {
@@ -29,7 +29,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// SPA Fallback
 app.use((req, res, next) => {
   if (req.path.startsWith("/api")) {
     return next();
@@ -41,26 +40,17 @@ app.use((req, res, next) => {
     return res.sendFile(indexPath);
   }
 
-  const rawDistPath = path.join(voiceAgentDir, "dist");
-  let distContents: string[] = [];
-
-  if (fs.existsSync(rawDistPath)) {
-    try {
-      distContents = fs.readdirSync(rawDistPath);
-    } catch (e) {
-      distContents = [];
-    }
-  }
-
-  res.status(404).send(
-    `Frontend build output missing. dist folder exists: ${fs.existsSync(rawDistPath)}, contents: ${JSON.stringify(distContents)}`
-  );
+  res.status(404).send("Frontend build output missing.");
 });
 
 const port = Number(process.env.PORT || 10000);
 
 const server = http.createServer(app);
 const wss = new WebSocketServer({ noServer: true });
+
+// Gemini Client Setup
+const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY || "";
+const ai = new GoogleGenerativeAI({ apiKey });
 
 server.on("upgrade", (request, socket, head) => {
   const url = new URL(request.url || "", `http://${request.headers.host}`);
@@ -73,36 +63,111 @@ server.on("upgrade", (request, socket, head) => {
   }
 });
 
-wss.on("connection", (ws: WebSocket, request) => {
-  console.log("WebSocket connection established");
+wss.on("connection", (ws: WebSocket) => {
+  console.log("Client WebSocket connected");
 
-  // ১. সেশন শুরু করে ফ্রন্টএন্ডে Session ID পাঠানো
   const sessionId = Math.random().toString(36).substring(2, 10);
   ws.send(JSON.stringify({ type: "session.started", sessionId }));
 
-  // ২. মাইকের অডিও ডাটা গ্রহণ করার লিসেনার
-  ws.on("message", (data) => {
-    try {
-      if (typeof data === "string") {
-        const parsed = JSON.parse(data);
-        if (parsed.type === "interrupt") {
-          console.log("Session interrupted by client");
+  // AssemblyAI Realtime WebSocket Connection Setup
+  const assemblyApiKey = process.env.ASSEMBLYAI_API_KEY;
+  let assemblyWs: WebSocket | null = null;
+
+  if (assemblyApiKey) {
+    assemblyWs = new WebSocket(
+      `wss://api.assemblyai.com/v2/realtime/ws?sample_rate=16000`,
+      { headers: { authorization: assemblyApiKey } }
+    );
+
+    assemblyWs.on("open", () => {
+      console.log("Connected to AssemblyAI Realtime API");
+    });
+
+    assemblyWs.on("message", async (data) => {
+      try {
+        const response = JSON.parse(data.toString());
+        if (response.message_type === "PartialTranscript" && response.text) {
+          ws.send(JSON.stringify({ type: "transcript.partial", text: response.text }));
+        } else if (response.message_type === "FinalTranscript" && response.text) {
+          const userText = response.text;
+          ws.send(JSON.stringify({ type: "transcript.final", text: userText }));
+
+          // Process with Gemini LLM
+          if (apiKey) {
+            try {
+              const model = ai.getGenerativeModel({ model: "gemini-2.5-flash" });
+              const result = await model.generateContentStream(userText);
+
+              let fullText = "";
+              for await (const chunk of result.stream) {
+                const chunkText = chunk.text();
+                fullText += chunkText;
+                ws.send(JSON.stringify({ type: "assistant.text.delta", text: chunkText }));
+              }
+
+              // ElevenLabs TTS Request
+              const elevenApiKey = process.env.ELEVENLABS_API_KEY;
+              const voiceId = process.env.ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM";
+
+              if (elevenApiKey && fullText) {
+                const ttsRes = await fetch(
+                  `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
+                  {
+                    method: "POST",
+                    headers: {
+                      "Accept": "audio/mpeg",
+                      "Content-Type": "application/json",
+                      "xi-api-key": elevenApiKey,
+                    },
+                    body: JSON.stringify({
+                      text: fullText,
+                      model_id: "eleven_monolingual_v1",
+                    }),
+                  }
+                );
+
+                if (ttsRes.ok) {
+                  const audioBuffer = await ttsRes.arrayBuffer();
+                  const base64Audio = Buffer.from(audioBuffer).toString("base64");
+                  ws.send(JSON.stringify({ type: "assistant.audio.chunk", audio: base64Audio }));
+                }
+              }
+
+              ws.send(JSON.stringify({ type: "turn.completed" }));
+            } catch (err: any) {
+              console.error("Gemini/ElevenLabs Error:", err);
+              ws.send(JSON.stringify({ type: "turn.failed", message: err.message }));
+            }
+          }
         }
-      } else if (Buffer.isBuffer(data) || data instanceof ArrayBuffer) {
-        // মোবাইল মাইক থেকে অডিও চ্যাঙ্ক সার্ভারে রিসিভ হচ্ছে
-        console.log(`Received audio chunk: ${data.byteLength || (data as Buffer).length} bytes`);
+      } catch (e) {
+        console.error("Error handling AssemblyAI message:", e);
       }
-    } catch (err) {
-      console.error("Error processing WebSocket message:", err);
+    });
+
+    assemblyWs.on("error", (err) => console.error("AssemblyAI WS Error:", err));
+  }
+
+  // Handle Incoming Client Audio Stream
+  ws.on("message", (data) => {
+    if (Buffer.isBuffer(data) || data instanceof ArrayBuffer) {
+      if (assemblyWs && assemblyWs.readyState === WebSocket.OPEN) {
+        const base64Audio = Buffer.from(data as any).toString("base64");
+        assemblyWs.send(JSON.stringify({ audio_data: base64Audio }));
+      }
+    } else {
+      try {
+        const parsed = JSON.parse(data.toString());
+        if (parsed.type === "interrupt") {
+          console.log("Session interrupted");
+        }
+      } catch (e) {}
     }
   });
 
   ws.on("close", () => {
-    console.log("WebSocket connection closed");
-  });
-
-  ws.on("error", (error) => {
-    console.error("WebSocket error:", error);
+    if (assemblyWs) assemblyWs.close();
+    console.log("Client WebSocket closed");
   });
 });
 
