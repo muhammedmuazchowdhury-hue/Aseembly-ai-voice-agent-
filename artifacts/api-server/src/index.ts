@@ -1,5 +1,13 @@
 import http from "http";
+import path from "path";
+import fs from "fs";
+import express from "express";
 import { WebSocketServer } from "ws";
+
+const app = express();
+app.use(express.json());
+
+const voiceAgentDir = path.resolve(process.cwd(), "artifacts/voice-agent");
 
 function getFrontendDistPath(): string | null {
   const possiblePaths = [
@@ -66,9 +74,9 @@ server.on("upgrade", (request, socket, head) => {
 });
 
 wss.on("connection", (ws, request) => {
-  logger.info("WebSocket connection established");
+  console.log("WebSocket connection established");
 });
 
 server.listen(port, "0.0.0.0", () => {
-  logger.info({ port }, "Server listening successfully");
+  console.log(`Server listening successfully on port ${port}`);
 });
