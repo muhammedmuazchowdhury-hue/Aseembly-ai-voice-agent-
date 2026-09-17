@@ -43,7 +43,6 @@ app.use((req, res, next) => {
 });
 
 const port = Number(process.env.PORT || 10000);
-
 const server = http.createServer(app);
 const wss = new WebSocketServer({ noServer: true });
 
@@ -58,7 +57,27 @@ server.on("upgrade", (request, socket, head) => {
   }
 });
 
-wss.on("connection", (ws: WebSocket) => {
+// AssemblyAI Temporary Token নেওয়ার হেলপার ফাংশন
+async function getAssemblyAIToken(apiKey: string): Promise<string> {
+  const response = await fetch("https://api.assemblyai.com/v2/realtime/token", {
+    method: "POST",
+    headers: {
+      authorization: apiKey.trim(),
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ expires_in: 3600 }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Token Fetch Failed (${response.status}): ${errorText}`);
+  }
+
+  const data = await response.json();
+  return data.token;
+}
+
+wss.on("connection", async (ws: WebSocket) => {
   console.log("Client WebSocket connected");
 
   const sessionId = Math.random().toString(36).substring(2, 10);
@@ -69,16 +88,24 @@ wss.on("connection", (ws: WebSocket) => {
   const elevenApiKey = process.env.ELEVENLABS_API_KEY;
   const voiceId = process.env.ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM";
 
+  if (!assemblyApiKey) {
+    console.error("ERROR: ASSEMBLYAI_API_KEY is missing in Environment Variables!");
+    return;
+  }
+
   let assemblyWs: WebSocket | null = null;
 
-  if (assemblyApiKey) {
+  try {
+    // ১. টোকেন তৈরি
+    const token = await getAssemblyAIToken(assemblyApiKey);
+    
+    // ২. টোকেন ব্যবহার করে WebSocket ডোমেইনে কানেক্ট
     assemblyWs = new WebSocket(
-      `wss://api.assemblyai.com/v2/realtime/ws?sample_rate=16000`,
-      { headers: { authorization: assemblyApiKey } }
+      `wss://api.assemblyai.com/v2/realtime/ws?sample_rate=16000&token=${token}`
     );
 
     assemblyWs.on("open", () => {
-      console.log("Connected to AssemblyAI Realtime API");
+      console.log("Connected to AssemblyAI Realtime API successfully!");
     });
 
     assemblyWs.on("message", async (data) => {
@@ -90,7 +117,6 @@ wss.on("connection", (ws: WebSocket) => {
           const userText = response.text;
           ws.send(JSON.stringify({ type: "transcript.final", text: userText }));
 
-          // Native fetch for Gemini API (No extra npm package needed)
           if (geminiApiKey) {
             try {
               const geminiRes = await fetch(
@@ -111,7 +137,6 @@ wss.on("connection", (ws: WebSocket) => {
               if (fullText) {
                 ws.send(JSON.stringify({ type: "assistant.text.delta", text: fullText }));
 
-                // ElevenLabs TTS Request
                 if (elevenApiKey) {
                   const ttsRes = await fetch(
                     `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
@@ -149,23 +174,20 @@ wss.on("connection", (ws: WebSocket) => {
       }
     });
 
-    assemblyWs.on("error", (err) => console.error("AssemblyAI WS Error:", err));
+    assemblyWs.on("error", (err) => {
+      console.error("AssemblyAI WS Error:", err.message || err);
+    });
+
+  } catch (err: any) {
+    console.error("AssemblyAI Setup Failed:", err.message);
   }
 
-  // Handle Incoming Client Audio Stream
   ws.on("message", (data) => {
     if (Buffer.isBuffer(data) || data instanceof ArrayBuffer) {
       if (assemblyWs && assemblyWs.readyState === WebSocket.OPEN) {
         const base64Audio = Buffer.from(data as any).toString("base64");
         assemblyWs.send(JSON.stringify({ audio_data: base64Audio }));
       }
-    } else {
-      try {
-        const parsed = JSON.parse(data.toString());
-        if (parsed.type === "interrupt") {
-          console.log("Session interrupted");
-        }
-      } catch (e) {}
     }
   });
 
