@@ -3,7 +3,6 @@ import path from "path";
 import fs from "fs";
 import express from "express";
 import { WebSocketServer, WebSocket } from "ws";
-import { GoogleGenerativeAI } from "@google/genai";
 
 const app = express();
 app.use(express.json());
@@ -48,10 +47,6 @@ const port = Number(process.env.PORT || 10000);
 const server = http.createServer(app);
 const wss = new WebSocketServer({ noServer: true });
 
-// Gemini Client Setup
-const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY || "";
-const ai = new GoogleGenerativeAI({ apiKey });
-
 server.on("upgrade", (request, socket, head) => {
   const url = new URL(request.url || "", `http://${request.headers.host}`);
   if (url.pathname === "/api/voice-agent/stream") {
@@ -69,8 +64,11 @@ wss.on("connection", (ws: WebSocket) => {
   const sessionId = Math.random().toString(36).substring(2, 10);
   ws.send(JSON.stringify({ type: "session.started", sessionId }));
 
-  // AssemblyAI Realtime WebSocket Connection Setup
   const assemblyApiKey = process.env.ASSEMBLYAI_API_KEY;
+  const geminiApiKey = process.env.GEMINI_API_KEY || process.env.API_KEY || "";
+  const elevenApiKey = process.env.ELEVENLABS_API_KEY;
+  const voiceId = process.env.ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM";
+
   let assemblyWs: WebSocket | null = null;
 
   if (assemblyApiKey) {
@@ -92,44 +90,50 @@ wss.on("connection", (ws: WebSocket) => {
           const userText = response.text;
           ws.send(JSON.stringify({ type: "transcript.final", text: userText }));
 
-          // Process with Gemini LLM
-          if (apiKey) {
+          // Native fetch for Gemini API (No extra npm package needed)
+          if (geminiApiKey) {
             try {
-              const model = ai.getGenerativeModel({ model: "gemini-2.5-flash" });
-              const result = await model.generateContentStream(userText);
+              const geminiRes = await fetch(
+                `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiApiKey}`,
+                {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    contents: [{ parts: [{ text: userText }] }],
+                  }),
+                }
+              );
 
-              let fullText = "";
-              for await (const chunk of result.stream) {
-                const chunkText = chunk.text();
-                fullText += chunkText;
-                ws.send(JSON.stringify({ type: "assistant.text.delta", text: chunkText }));
-              }
+              const geminiData = await geminiRes.json();
+              const fullText =
+                geminiData.candidates?.[0]?.content?.parts?.[0]?.text || "";
 
-              // ElevenLabs TTS Request
-              const elevenApiKey = process.env.ELEVENLABS_API_KEY;
-              const voiceId = process.env.ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM";
+              if (fullText) {
+                ws.send(JSON.stringify({ type: "assistant.text.delta", text: fullText }));
 
-              if (elevenApiKey && fullText) {
-                const ttsRes = await fetch(
-                  `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
-                  {
-                    method: "POST",
-                    headers: {
-                      "Accept": "audio/mpeg",
-                      "Content-Type": "application/json",
-                      "xi-api-key": elevenApiKey,
-                    },
-                    body: JSON.stringify({
-                      text: fullText,
-                      model_id: "eleven_monolingual_v1",
-                    }),
+                // ElevenLabs TTS Request
+                if (elevenApiKey) {
+                  const ttsRes = await fetch(
+                    `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
+                    {
+                      method: "POST",
+                      headers: {
+                        "Accept": "audio/mpeg",
+                        "Content-Type": "application/json",
+                        "xi-api-key": elevenApiKey,
+                      },
+                      body: JSON.stringify({
+                        text: fullText,
+                        model_id: "eleven_monolingual_v1",
+                      }),
+                    }
+                  );
+
+                  if (ttsRes.ok) {
+                    const audioBuffer = await ttsRes.arrayBuffer();
+                    const base64Audio = Buffer.from(audioBuffer).toString("base64");
+                    ws.send(JSON.stringify({ type: "assistant.audio.chunk", audio: base64Audio }));
                   }
-                );
-
-                if (ttsRes.ok) {
-                  const audioBuffer = await ttsRes.arrayBuffer();
-                  const base64Audio = Buffer.from(audioBuffer).toString("base64");
-                  ws.send(JSON.stringify({ type: "assistant.audio.chunk", audio: base64Audio }));
                 }
               }
 
