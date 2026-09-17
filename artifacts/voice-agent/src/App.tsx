@@ -56,7 +56,9 @@ function Home() {
         </h1>
         <div className="flex items-center space-x-2 text-xs">
           <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-          <span className="text-slate-400 font-mono">Session: {sessionId ? sessionId.slice(0, 8) : 'Connecting...'}</span>
+          <span className="text-slate-400 font-mono">
+            Session: {sessionId ? sessionId.slice(0, 8) : agentState !== 'idle' ? 'Connected' : 'Connecting...'}
+          </span>
         </div>
       </header>
 
