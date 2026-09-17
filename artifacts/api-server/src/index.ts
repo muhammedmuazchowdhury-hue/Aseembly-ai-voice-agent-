@@ -2,7 +2,7 @@ import http from "http";
 import path from "path";
 import fs from "fs";
 import express from "express";
-import { WebSocketServer } from "ws";
+import { WebSocketServer, WebSocket } from "ws";
 
 const app = express();
 app.use(express.json());
@@ -73,8 +73,37 @@ server.on("upgrade", (request, socket, head) => {
   }
 });
 
-wss.on("connection", (ws, request) => {
+wss.on("connection", (ws: WebSocket, request) => {
   console.log("WebSocket connection established");
+
+  // ১. সেশন শুরু করে ফ্রন্টএন্ডে Session ID পাঠানো
+  const sessionId = Math.random().toString(36).substring(2, 10);
+  ws.send(JSON.stringify({ type: "session.started", sessionId }));
+
+  // ২. মাইকের অডিও ডাটা গ্রহণ করার লিসেনার
+  ws.on("message", (data) => {
+    try {
+      if (typeof data === "string") {
+        const parsed = JSON.parse(data);
+        if (parsed.type === "interrupt") {
+          console.log("Session interrupted by client");
+        }
+      } else if (Buffer.isBuffer(data) || data instanceof ArrayBuffer) {
+        // মোবাইল মাইক থেকে অডিও চ্যাঙ্ক সার্ভারে রিসিভ হচ্ছে
+        console.log(`Received audio chunk: ${data.byteLength || (data as Buffer).length} bytes`);
+      }
+    } catch (err) {
+      console.error("Error processing WebSocket message:", err);
+    }
+  });
+
+  ws.on("close", () => {
+    console.log("WebSocket connection closed");
+  });
+
+  ws.on("error", (error) => {
+    console.error("WebSocket error:", error);
+  });
 });
 
 server.listen(port, "0.0.0.0", () => {
