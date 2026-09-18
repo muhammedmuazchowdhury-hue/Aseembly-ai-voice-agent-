@@ -94,9 +94,9 @@ async function processPipeline(
   try {
     console.log("[Pipeline] Sending request to Gemini API...");
     
-    // v1beta এর বদলে v1 এবং মডেল নাম সঠিকভাবে তৈরি করা
+    // জেমিনির লেটেস্ট ও কার্যকরী মডেল
     const geminiRes = await fetch(
-      `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${geminiApiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiApiKey}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -111,8 +111,6 @@ async function processPipeline(
     if (!geminiRes.ok) {
       const errBody = await geminiRes.text();
       console.error(`[Pipeline Error] Gemini API Failed (${geminiRes.status}):`, errBody);
-      
-      // Fallback response handling so UI never hangs or stays stuck in 404
       fullText = "NeuralEcho system is active. High speed voice pipeline connected successfully.";
     } else {
       const geminiData = await geminiRes.json();
@@ -136,7 +134,8 @@ async function processPipeline(
             },
             body: JSON.stringify({
               text: fullText,
-              model_id: "eleven_monolingual_v1",
+              // পুরোনো মডেল বাদ দিয়ে লেটেস্ট সাপোর্টেড মডেল আইডি
+              model_id: "eleven_flash_v2_5",
             }),
           }
         );
