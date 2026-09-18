@@ -93,8 +93,9 @@ async function processPipeline(
 
   try {
     console.log("[Pipeline] Sending request to Gemini API...");
+    // Gemini API-এর কার্যকরী এন্ডপয়েন্ট 'gemini-1.5-flash' আপডেট করা হয়েছে
     const geminiRes = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiApiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiApiKey}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
