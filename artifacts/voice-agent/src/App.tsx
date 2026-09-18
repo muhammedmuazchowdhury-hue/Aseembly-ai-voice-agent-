@@ -29,15 +29,23 @@ function Home() {
     assistantText,
     triggerMockSpeech,
     handleInterrupt,
+    sendAudioChunk,
   } = useVoiceAgent();
 
-  const { isRecording, startRecording, stopRecording } = useAudioRecorder(() => {});
+  // মাইক্রোফোনের রেকর্ডকৃত অডিও সরাসরি সকেটে পাঠানোর কানেকশন
+  const { isRecording, startRecording, stopRecording } = useAudioRecorder((chunk) => {
+    if (sendAudioChunk) {
+      sendAudioChunk(chunk);
+    }
+  });
 
-  // প্রসেসিং চলাকালে 'thinking', অডিও বাজলে 'speaking' দেখাবে
+  // রেকর্ডিং চলাকালে 'listening', প্রসেসিংয়ে 'thinking', অডিও প্লেব্যাকের সময় 'speaking'
   const agentState = isPlaying
     ? 'speaking'
     : isProcessing
     ? 'thinking'
+    : isRecording
+    ? 'listening'
     : isConnected
     ? 'idle'
     : 'connecting';
