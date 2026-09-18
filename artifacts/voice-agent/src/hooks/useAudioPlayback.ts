@@ -5,12 +5,11 @@ export function useAudioPlayback() {
   const audioCtxRef = useRef<AudioContext | null>(null);
   const nextStartTimeRef = useRef<number>(0);
   const activeSourcesRef = useRef<AudioBufferSourceNode[]>([]);
-  const isProcessingRef = useRef<boolean>(false);
 
   const initAudioContext = useCallback(() => {
     if (!audioCtxRef.current || audioCtxRef.current.state === 'closed') {
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-      audioCtxRef.current = new AudioCtx({ sampleRate: 24000 });
+      audioCtxRef.current = new AudioCtx();
     }
     if (audioCtxRef.current.state === 'suspended') {
       audioCtxRef.current.resume();
@@ -21,7 +20,8 @@ export function useAudioPlayback() {
   const enqueueAudioChunk = useCallback(async (base64Audio: string) => {
     try {
       const ctx = initAudioContext();
-      
+
+      // Base64 থেকে Uint8Array তৈরি
       const binaryString = atob(base64Audio);
       const len = binaryString.length;
       const bytes = new Uint8Array(len);
@@ -29,15 +29,21 @@ export function useAudioPlayback() {
         bytes[i] = binaryString.charCodeAt(i);
       }
 
-      const audioBuffer = await ctx.decodeAudioData(bytes.buffer);
-      
+      // Safe ArrayBuffer copy
+      const bufferCopy = bytes.buffer.slice(
+        bytes.byteOffset,
+        bytes.byteOffset + bytes.byteLength
+      );
+
+      const audioBuffer = await ctx.decodeAudioData(bufferCopy);
+
       const source = ctx.createBufferSource();
       source.buffer = audioBuffer;
       source.connect(ctx.destination);
 
       const currentTime = ctx.currentTime;
       const startTime = Math.max(currentTime, nextStartTimeRef.current);
-      
+
       source.start(startTime);
       nextStartTimeRef.current = startTime + audioBuffer.duration;
 
@@ -46,7 +52,8 @@ export function useAudioPlayback() {
 
       source.onended = () => {
         activeSourcesRef.current = activeSourcesRef.current.filter((s) => s !== source);
-        if (activeSourcesRef.current.length === 0 && ctx.currentTime >= nextStartTimeRef.current) {
+        // কিউতে আর কোনো অডিও বাকি না থাকলে isPlaying বন্ধ হবে
+        if (activeSourcesRef.current.length === 0) {
           setIsPlaying(false);
         }
       };
@@ -56,12 +63,13 @@ export function useAudioPlayback() {
   }, [initAudioContext]);
 
   const stopPlayback = useCallback(() => {
+    // সব চালু থাকা অডিও থামানো
     activeSourcesRef.current.forEach((source) => {
       try {
         source.stop();
         source.disconnect();
       } catch (err) {
-        // Source might have already stopped
+        // ইতোমধ্যে বন্ধ হয়ে গিয়ে থাকলে এরর ইগনোর করবে
       }
     });
 
