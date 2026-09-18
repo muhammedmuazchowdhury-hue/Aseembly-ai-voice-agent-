@@ -11,9 +11,8 @@ import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import NotFound from '@/pages/not-found';
 
-import { useVoiceSession } from './hooks/useVoiceSession';
+import { useVoiceAgent } from './hooks/useVoiceAgent';
 import { useAudioRecorder } from './hooks/useAudioRecorder';
-import { useAudioPlayback } from './hooks/useAudioPlayback';
 import { VoiceOrb } from './components/VoiceOrb';
 import { TranscriptView } from './components/TranscriptView';
 import { LatencyPanel } from './components/LatencyPanel';
@@ -22,27 +21,23 @@ const queryClient = new QueryClient();
 
 function Home() {
   const {
-    agentState,
-    sessionId,
-    partialTranscript,
-    finalTranscript,
-    aiResponseText,
-    metrics,
-    error,
-    sendAudioChunk,
-    interrupt,
-  } = useVoiceSession();
+    isConnected,
+    isPlaying,
+    userText,
+    assistantText,
+    triggerMockSpeech,
+    handleInterrupt,
+  } = useVoiceAgent();
 
-  const { stopPlayback } = useAudioPlayback();
-  const { isRecording, startRecording, stopRecording } = useAudioRecorder((chunk) => {
-    sendAudioChunk(chunk);
-  });
+  const { isRecording, startRecording, stopRecording } = useAudioRecorder(() => {});
+
+  const agentState = isPlaying ? 'speaking' : isConnected ? 'idle' : 'connecting';
 
   const handleOrbClick = () => {
-    if (isRecording) {
+    if (isPlaying) {
+      handleInterrupt();
+    } else if (isRecording) {
       stopRecording();
-      interrupt();
-      stopPlayback();
     } else {
       startRecording();
     }
@@ -55,21 +50,15 @@ function Home() {
           Real-Time Voice Agent
         </h1>
         <div className="flex items-center space-x-2 text-xs">
-          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+          <span className={`w-2 h-2 rounded-full ${isConnected ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`}></span>
           <span className="text-slate-400 font-mono">
-            Session: {sessionId ? sessionId.slice(0, 8) : agentState !== 'idle' ? 'Connected' : 'Connecting...'}
+            {isConnected ? 'Connected' : 'Connecting...'}
           </span>
         </div>
       </header>
 
       <main className="w-full max-w-2xl flex flex-col items-center space-y-6 my-auto">
-        {error && (
-          <div className="w-full p-3 bg-red-500/20 border border-red-500/50 rounded-lg text-red-300 text-sm">
-            {error}
-          </div>
-        )}
-
-        <VoiceOrb state={agentState} onClick={handleOrbClick} />
+        <VoiceOrb state={agentState as any} onClick={handleOrbClick} />
 
         <div className="text-center">
           <p className="text-sm font-medium text-slate-300 capitalize">
@@ -77,13 +66,30 @@ function Home() {
           </p>
         </div>
 
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => triggerMockSpeech()}
+            disabled={!isConnected}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-xs font-semibold rounded-lg transition-colors shadow-lg cursor-pointer"
+          >
+            ⚡ Test Mock Speech
+          </button>
+          <button
+            onClick={handleInterrupt}
+            disabled={!isPlaying}
+            className="px-4 py-2 bg-red-600 hover:bg-red-500 disabled:opacity-50 text-xs font-semibold rounded-lg transition-colors shadow-lg cursor-pointer"
+          >
+            🛑 Interrupt
+          </button>
+        </div>
+
         <TranscriptView
-          partialTranscript={partialTranscript}
-          finalTranscript={finalTranscript}
-          aiResponseText={aiResponseText}
+          partialTranscript=""
+          finalTranscript={userText}
+          aiResponseText={assistantText}
         />
 
-        <LatencyPanel metrics={metrics} />
+        <LatencyPanel metrics={null} />
       </main>
 
       <footer className="w-full max-w-2xl text-center border-t border-slate-800 pt-4 text-xs text-slate-500">
@@ -113,7 +119,7 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
+        <WouterRouter base={import.meta.env.BASE_URL ? import.meta.env.BASE_URL.replace(/\/$/, '') : ''}>
           <Router />
         </WouterRouter>
         <Toaster />
