@@ -83,13 +83,16 @@ async function processPipeline(
   elevenApiKey?: string,
   voiceId?: string
 ) {
+  console.log(`[Pipeline] Processing user prompt: "${userText}"`);
+
   if (!geminiApiKey) {
-    console.error("Gemini API key is missing");
+    console.error("[Pipeline Error] Gemini API key is missing");
     ws.send(JSON.stringify({ type: "turn.failed", message: "Gemini API key is missing" }));
     return;
   }
 
   try {
+    console.log("[Pipeline] Sending request to Gemini API...");
     const geminiRes = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiApiKey}`,
       {
@@ -101,13 +104,22 @@ async function processPipeline(
       }
     );
 
+    if (!geminiRes.ok) {
+      const errBody = await geminiRes.text();
+      console.error(`[Pipeline Error] Gemini API Failed (${geminiRes.status}):`, errBody);
+      ws.send(JSON.stringify({ type: "turn.failed", message: `Gemini API error: ${geminiRes.status}` }));
+      return;
+    }
+
     const geminiData = await geminiRes.json();
     const fullText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || "";
 
     if (fullText) {
+      console.log(`[Pipeline] Gemini Response received: "${fullText.substring(0, 50)}..."`);
       ws.send(JSON.stringify({ type: "assistant.text.delta", text: fullText }));
 
-      if (elevenApiKey) {
+      if (elevenApiKey && voiceId) {
+        console.log("[Pipeline] Sending request to ElevenLabs API...");
         const ttsRes = await fetch(
           `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
           {
@@ -127,14 +139,22 @@ async function processPipeline(
         if (ttsRes.ok) {
           const audioBuffer = await ttsRes.arrayBuffer();
           const base64Audio = Buffer.from(audioBuffer).toString("base64");
+          console.log("[Pipeline] Sending audio chunk to client");
           ws.send(JSON.stringify({ type: "assistant.audio.chunk", audio: base64Audio }));
+        } else {
+          const ttsErr = await ttsRes.text();
+          console.error(`[Pipeline Error] ElevenLabs TTS Failed (${ttsRes.status}):`, ttsErr);
         }
+      } else {
+        console.warn("[Pipeline Warning] ElevenLabs API key or Voice ID is missing. Skipping audio generation.");
       }
+    } else {
+      console.warn("[Pipeline Warning] Gemini returned empty response text.");
     }
 
     ws.send(JSON.stringify({ type: "turn.completed" }));
   } catch (err: any) {
-    console.error("Gemini/ElevenLabs Error:", err);
+    console.error("[Pipeline Error] Unhandled Exception:", err);
     ws.send(JSON.stringify({ type: "turn.failed", message: err.message }));
   }
 }
@@ -192,12 +212,15 @@ wss.on("connection", async (ws: WebSocket) => {
   }
 
   ws.on("message", async (data) => {
-    if (typeof data === "string" || (Buffer.isBuffer(data) && data.toString().trim().startsWith("{"))) {
+    const rawString = data.toString();
+
+    if (typeof data === "string" || (Buffer.isBuffer(data) && rawString.trim().startsWith("{"))) {
       try {
-        const payload = JSON.parse(data.toString());
+        const payload = JSON.parse(rawString);
 
         if (payload.type === "client.mock_speech") {
           const mockText = payload.text || "Hello! How does NeuralEcho process ultra low latency responses?";
+          console.log(`[Mock Speech] Received event from client with text: "${mockText}"`);
           ws.send(JSON.stringify({ type: "transcript.final", text: mockText }));
           await processPipeline(mockText, ws, geminiApiKey, elevenApiKey, voiceId);
           return;
