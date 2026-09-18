@@ -134,7 +134,7 @@ async function processPipeline(
             },
             body: JSON.stringify({
               text: fullText,
-              // পুরোনো মডেল বাদ দিয়ে লেটেস্ট সাপোর্টেড মডেল আইডি
+              // লেটেস্ট সাপোর্টেড মডেল আইডি
               model_id: "eleven_flash_v2_5",
             }),
           }
@@ -166,10 +166,11 @@ wss.on("connection", async (ws: WebSocket) => {
   ws.send(JSON.stringify({ type: "session.started", sessionId }));
 
   const useMockStt = process.env.USE_MOCK_STT === "true";
-  const assemblyApiKey = process.env.ASSEMBLYAI_API_KEY;
-  const geminiApiKey = process.env.GEMINI_API_KEY || process.env.API_KEY || "";
-  const elevenApiKey = process.env.ELEVENLABS_API_KEY;
-  const voiceId = process.env.ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM";
+  const assemblyApiKey = process.env.ASSEMBLYAI_API_KEY?.trim();
+  // API Key ট্রিম করে নেওয়া হলো যেন অতিরিক্ত স্পেস বা নিউ-লাইন মুছে যায়
+  const geminiApiKey = (process.env.GEMINI_API_KEY || process.env.API_KEY || "").trim();
+  const elevenApiKey = process.env.ELEVENLABS_API_KEY?.trim();
+  const voiceId = (process.env.ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM").trim();
 
   let assemblyWs: WebSocket | null = null;
 
