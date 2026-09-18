@@ -22,6 +22,8 @@ const queryClient = new QueryClient();
 function Home() {
   const {
     isConnected,
+    sessionId,
+    isProcessing,
     isPlaying,
     userText,
     assistantText,
@@ -31,7 +33,14 @@ function Home() {
 
   const { isRecording, startRecording, stopRecording } = useAudioRecorder(() => {});
 
-  const agentState = isPlaying ? 'speaking' : isConnected ? 'idle' : 'connecting';
+  // প্রসেসিং চলাকালে 'thinking', অডিও বাজলে 'speaking' দেখাবে
+  const agentState = isPlaying
+    ? 'speaking'
+    : isProcessing
+    ? 'thinking'
+    : isConnected
+    ? 'idle'
+    : 'connecting';
 
   const handleOrbClick = () => {
     if (isPlaying) {
@@ -52,7 +61,7 @@ function Home() {
         <div className="flex items-center space-x-2 text-xs">
           <span className={`w-2 h-2 rounded-full ${isConnected ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`}></span>
           <span className="text-slate-400 font-mono">
-            {isConnected ? 'Connected' : 'Connecting...'}
+            Session: {sessionId ? sessionId.slice(0, 8) : isConnected ? 'Connected' : 'Connecting...'}
           </span>
         </div>
       </header>
@@ -69,14 +78,14 @@ function Home() {
         <div className="flex items-center gap-3">
           <button
             onClick={() => triggerMockSpeech()}
-            disabled={!isConnected}
+            disabled={!isConnected || isProcessing}
             className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-xs font-semibold rounded-lg transition-colors shadow-lg cursor-pointer"
           >
             ⚡ Test Mock Speech
           </button>
           <button
             onClick={handleInterrupt}
-            disabled={!isPlaying}
+            disabled={!isPlaying && !isProcessing}
             className="px-4 py-2 bg-red-600 hover:bg-red-500 disabled:opacity-50 text-xs font-semibold rounded-lg transition-colors shadow-lg cursor-pointer"
           >
             🛑 Interrupt
