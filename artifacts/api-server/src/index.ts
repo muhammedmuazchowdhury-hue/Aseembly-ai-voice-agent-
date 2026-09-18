@@ -57,7 +57,6 @@ server.on("upgrade", (request, socket, head) => {
   }
 });
 
-// AssemblyAI Temporary Token নেওয়ার হেলপার ফাংশন
 async function getAssemblyAIToken(apiKey: string): Promise<string> {
   const response = await fetch("https://api.assemblyai.com/v2/realtime/token", {
     method: "POST",
@@ -77,112 +76,137 @@ async function getAssemblyAIToken(apiKey: string): Promise<string> {
   return data.token;
 }
 
+async function processPipeline(
+  userText: string,
+  ws: WebSocket,
+  geminiApiKey: string,
+  elevenApiKey?: string,
+  voiceId?: string
+) {
+  if (!geminiApiKey) {
+    console.error("Gemini API key is missing");
+    ws.send(JSON.stringify({ type: "turn.failed", message: "Gemini API key is missing" }));
+    return;
+  }
+
+  try {
+    const geminiRes = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiApiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: userText }] }],
+        }),
+      }
+    );
+
+    const geminiData = await geminiRes.json();
+    const fullText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || "";
+
+    if (fullText) {
+      ws.send(JSON.stringify({ type: "assistant.text.delta", text: fullText }));
+
+      if (elevenApiKey) {
+        const ttsRes = await fetch(
+          `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
+          {
+            method: "POST",
+            headers: {
+              Accept: "audio/mpeg",
+              "Content-Type": "application/json",
+              "xi-api-key": elevenApiKey,
+            },
+            body: JSON.stringify({
+              text: fullText,
+              model_id: "eleven_monolingual_v1",
+            }),
+          }
+        );
+
+        if (ttsRes.ok) {
+          const audioBuffer = await ttsRes.arrayBuffer();
+          const base64Audio = Buffer.from(audioBuffer).toString("base64");
+          ws.send(JSON.stringify({ type: "assistant.audio.chunk", audio: base64Audio }));
+        }
+      }
+    }
+
+    ws.send(JSON.stringify({ type: "turn.completed" }));
+  } catch (err: any) {
+    console.error("Gemini/ElevenLabs Error:", err);
+    ws.send(JSON.stringify({ type: "turn.failed", message: err.message }));
+  }
+}
+
 wss.on("connection", async (ws: WebSocket) => {
   console.log("Client WebSocket connected");
 
   const sessionId = Math.random().toString(36).substring(2, 10);
   ws.send(JSON.stringify({ type: "session.started", sessionId }));
 
+  const useMockStt = process.env.USE_MOCK_STT === "true";
   const assemblyApiKey = process.env.ASSEMBLYAI_API_KEY;
   const geminiApiKey = process.env.GEMINI_API_KEY || process.env.API_KEY || "";
   const elevenApiKey = process.env.ELEVENLABS_API_KEY;
   const voiceId = process.env.ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM";
 
-  if (!assemblyApiKey) {
-    console.error("ERROR: ASSEMBLYAI_API_KEY is missing in Environment Variables!");
-    return;
-  }
-
   let assemblyWs: WebSocket | null = null;
 
-  try {
-    // ১. টোকেন তৈরি
-    const token = await getAssemblyAIToken(assemblyApiKey);
-    
-    // ২. টোকেন ব্যবহার করে WebSocket ডোমেইনে কানেক্ট
-    assemblyWs = new WebSocket(
-      `wss://api.assemblyai.com/v2/realtime/ws?sample_rate=16000&token=${token}`
-    );
+  if (useMockStt) {
+    console.log("[Mock Mode] USE_MOCK_STT is enabled. Skipping AssemblyAI socket connection.");
+  } else if (!assemblyApiKey) {
+    console.warn("WARNING: ASSEMBLYAI_API_KEY is missing. Operating in Fallback/Mock mode.");
+  } else {
+    try {
+      const token = await getAssemblyAIToken(assemblyApiKey);
+      assemblyWs = new WebSocket(
+        `wss://api.assemblyai.com/v2/realtime/ws?sample_rate=16000&token=${token}`
+      );
 
-    assemblyWs.on("open", () => {
-      console.log("Connected to AssemblyAI Realtime API successfully!");
-    });
+      assemblyWs.on("open", () => {
+        console.log("Connected to AssemblyAI Realtime API successfully!");
+      });
 
-    assemblyWs.on("message", async (data) => {
-      try {
-        const response = JSON.parse(data.toString());
-        if (response.message_type === "PartialTranscript" && response.text) {
-          ws.send(JSON.stringify({ type: "transcript.partial", text: response.text }));
-        } else if (response.message_type === "FinalTranscript" && response.text) {
-          const userText = response.text;
-          ws.send(JSON.stringify({ type: "transcript.final", text: userText }));
-
-          if (geminiApiKey) {
-            try {
-              const geminiRes = await fetch(
-                `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiApiKey}`,
-                {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    contents: [{ parts: [{ text: userText }] }],
-                  }),
-                }
-              );
-
-              const geminiData = await geminiRes.json();
-              const fullText =
-                geminiData.candidates?.[0]?.content?.parts?.[0]?.text || "";
-
-              if (fullText) {
-                ws.send(JSON.stringify({ type: "assistant.text.delta", text: fullText }));
-
-                if (elevenApiKey) {
-                  const ttsRes = await fetch(
-                    `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
-                    {
-                      method: "POST",
-                      headers: {
-                        "Accept": "audio/mpeg",
-                        "Content-Type": "application/json",
-                        "xi-api-key": elevenApiKey,
-                      },
-                      body: JSON.stringify({
-                        text: fullText,
-                        model_id: "eleven_monolingual_v1",
-                      }),
-                    }
-                  );
-
-                  if (ttsRes.ok) {
-                    const audioBuffer = await ttsRes.arrayBuffer();
-                    const base64Audio = Buffer.from(audioBuffer).toString("base64");
-                    ws.send(JSON.stringify({ type: "assistant.audio.chunk", audio: base64Audio }));
-                  }
-                }
-              }
-
-              ws.send(JSON.stringify({ type: "turn.completed" }));
-            } catch (err: any) {
-              console.error("Gemini/ElevenLabs Error:", err);
-              ws.send(JSON.stringify({ type: "turn.failed", message: err.message }));
-            }
+      assemblyWs.on("message", async (data) => {
+        try {
+          const response = JSON.parse(data.toString());
+          if (response.message_type === "PartialTranscript" && response.text) {
+            ws.send(JSON.stringify({ type: "transcript.partial", text: response.text }));
+          } else if (response.message_type === "FinalTranscript" && response.text) {
+            const userText = response.text;
+            ws.send(JSON.stringify({ type: "transcript.final", text: userText }));
+            await processPipeline(userText, ws, geminiApiKey, elevenApiKey, voiceId);
           }
+        } catch (e) {
+          console.error("Error handling AssemblyAI message:", e);
         }
-      } catch (e) {
-        console.error("Error handling AssemblyAI message:", e);
-      }
-    });
+      });
 
-    assemblyWs.on("error", (err) => {
-      console.error("AssemblyAI WS Error:", err.message || err);
-    });
-
-  } catch (err: any) {
-    console.error("AssemblyAI Setup Failed:", err.message);
+      assemblyWs.on("error", (err) => {
+        console.error("AssemblyAI WS Error:", err.message || err);
+      });
+    } catch (err: any) {
+      console.error("AssemblyAI Setup Failed:", err.message);
+    }
   }
 
-  ws.on("message", (data) => {
+  ws.on("message", async (data) => {
+    if (typeof data === "string" || (Buffer.isBuffer(data) && data.toString().trim().startsWith("{"))) {
+      try {
+        const payload = JSON.parse(data.toString());
+
+        if (payload.type === "client.mock_speech") {
+          const mockText = payload.text || "Hello! How does NeuralEcho process ultra low latency responses?";
+          ws.send(JSON.stringify({ type: "transcript.final", text: mockText }));
+          await processPipeline(mockText, ws, geminiApiKey, elevenApiKey, voiceId);
+          return;
+        }
+      } catch (err) {
+        // Fall back to binary buffer processing
+      }
+    }
+
     if (Buffer.isBuffer(data) || data instanceof ArrayBuffer) {
       if (assemblyWs && assemblyWs.readyState === WebSocket.OPEN) {
         const base64Audio = Buffer.from(data as any).toString("base64");
