@@ -2,66 +2,79 @@ import { useState, useRef, useCallback } from 'react';
 
 export function useAudioPlayback() {
   const [isPlaying, setIsPlaying] = useState(false);
-  const audioQueueRef = useRef<string[]>([]);
-  const currentAudioRef = useRef<HTMLAudioElement | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const nextStartTimeRef = useRef<number>(0);
+  const activeSourcesRef = useRef<AudioBufferSourceNode[]>([]);
+  const isProcessingRef = useRef<boolean>(false);
 
-  const playNext = useCallback(() => {
-    if (audioQueueRef.current.length === 0) {
-      setIsPlaying(false);
-      currentAudioRef.current = null;
-      return;
+  const initAudioContext = useCallback(() => {
+    if (!audioCtxRef.current || audioCtxRef.current.state === 'closed') {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      audioCtxRef.current = new AudioCtx({ sampleRate: 24000 });
     }
+    if (audioCtxRef.current.state === 'suspended') {
+      audioCtxRef.current.resume();
+    }
+    return audioCtxRef.current;
+  }, []);
 
-    setIsPlaying(true);
-    const base64Chunk = audioQueueRef.current.shift()!;
-    
+  const enqueueAudioChunk = useCallback(async (base64Audio: string) => {
     try {
-      const binaryString = atob(base64Chunk);
+      const ctx = initAudioContext();
+      
+      const binaryString = atob(base64Audio);
       const len = binaryString.length;
       const bytes = new Uint8Array(len);
       for (let i = 0; i < len; i++) {
         bytes[i] = binaryString.charCodeAt(i);
       }
+
+      const audioBuffer = await ctx.decodeAudioData(bytes.buffer);
       
-      const blob = new Blob([bytes], { type: 'audio/mpeg' });
-      const url = URL.createObjectURL(blob);
-      const audio = new Audio(url);
-      currentAudioRef.current = audio;
+      const source = ctx.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(ctx.destination);
 
-      audio.onended = () => {
-        URL.revokeObjectURL(url);
-        playNext();
+      const currentTime = ctx.currentTime;
+      const startTime = Math.max(currentTime, nextStartTimeRef.current);
+      
+      source.start(startTime);
+      nextStartTimeRef.current = startTime + audioBuffer.duration;
+
+      activeSourcesRef.current.push(source);
+      setIsPlaying(true);
+
+      source.onended = () => {
+        activeSourcesRef.current = activeSourcesRef.current.filter((s) => s !== source);
+        if (activeSourcesRef.current.length === 0 && ctx.currentTime >= nextStartTimeRef.current) {
+          setIsPlaying(false);
+        }
       };
-
-      audio.onerror = (err) => {
-        console.error('Audio playback chunk error:', err);
-        URL.revokeObjectURL(url);
-        playNext();
-      };
-
-      audio.play().catch(err => {
-        console.error('Audio play promise rejected:', err);
-        playNext();
-      });
     } catch (err) {
-      console.error('Failed to process audio chunk:', err);
-      playNext();
+      console.error('Failed to process or play audio chunk:', err);
     }
-  }, []);
-
-  const enqueueAudioChunk = useCallback((base64Audio: string) => {
-    audioQueueRef.current.push(base64Audio);
-    if (!isPlaying) {
-      playNext();
-    }
-  }, [isPlaying, playNext]);
+  }, [initAudioContext]);
 
   const stopPlayback = useCallback(() => {
-    audioQueueRef.current = [];
-    if (currentAudioRef.current) {
-      currentAudioRef.current.pause();
-      currentAudioRef.current = null;
+    activeSourcesRef.current.forEach((source) => {
+      try {
+        source.stop();
+        source.disconnect();
+      } catch (err) {
+        // Source might have already stopped
+      }
+    });
+
+    activeSourcesRef.current = [];
+    nextStartTimeRef.current = 0;
+
+    if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
+      audioCtxRef.current.close().catch((err) => {
+        console.error('Error closing AudioContext:', err);
+      });
+      audioCtxRef.current = null;
     }
+
     setIsPlaying(false);
   }, []);
 
