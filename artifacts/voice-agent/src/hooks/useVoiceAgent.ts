@@ -4,6 +4,8 @@ import { useAudioPlayback } from "./useAudioPlayback";
 export function useVoiceAgent() {
   const socketRef = useRef<WebSocket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
   const [assistantText, setAssistantText] = useState("");
   const [userText, setUserText] = useState("");
 
@@ -24,7 +26,12 @@ export function useVoiceAgent() {
         const data = JSON.parse(event.data);
 
         switch (data.type) {
+          case "session.started":
+            if (data.sessionId) setSessionId(data.sessionId);
+            break;
+
           case "assistant.audio.chunk":
+            setIsProcessing(false);
             if (data.audio) {
               enqueueAudioChunk(data.audio);
             }
@@ -44,6 +51,8 @@ export function useVoiceAgent() {
             break;
 
           case "turn.completed":
+          case "turn.failed":
+            setIsProcessing(false);
             break;
 
           default:
@@ -54,6 +63,7 @@ export function useVoiceAgent() {
 
     ws.onclose = () => {
       setIsConnected(false);
+      setSessionId(null);
     };
 
     return () => {
@@ -63,6 +73,7 @@ export function useVoiceAgent() {
 
   const triggerMockSpeech = useCallback((customText?: string) => {
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+      setIsProcessing(true);
       socketRef.current.send(
         JSON.stringify({
           type: "client.mock_speech",
@@ -72,16 +83,26 @@ export function useVoiceAgent() {
     }
   }, []);
 
+  const sendAudioChunk = useCallback((chunk: ArrayBuffer) => {
+    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+      socketRef.current.send(chunk);
+    }
+  }, []);
+
   const handleInterrupt = useCallback(() => {
     stopPlayback();
+    setIsProcessing(false);
   }, [stopPlayback]);
 
   return {
     isConnected,
+    sessionId,
+    isProcessing,
     isPlaying,
     userText,
     assistantText,
     triggerMockSpeech,
     handleInterrupt,
+    sendAudioChunk,
   };
 }
